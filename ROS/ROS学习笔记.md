@@ -1138,8 +1138,189 @@ http://wiki.ros.org/catkin/package.xml#Metapackages
 
 ​	  要包含的文件路径
 
-* ns=“xxx”（可选） 在指定命名空间导入文件
+* **ns=“**xxx**”**（可选） 在指定命名空间导入文件
+
+###### 4.remap标签
+
+用于话题重命名
+
+*  **from="**xxx**"** 原始话题名称
+* **to="**yyy**"** 目标名称
+
+###### 5.param标签
+
+用于在参数服务器上设置参数，参数源可以在标签中通过value指定，也可以通过外部文件加载，在`<node>`标签中时，相当于私有命名空间。
+
+* **name="**命名空间/参数名**"**	参数名称、可以包含命名空间
+* **value="**xxx**"**（可选） 定义参数值，如果此处省略，必须指定外部文件作为参数源。
+* **type="**str | int | double | bool | yaml**"** （可选） 制定参数类型，如果未指定，roslaunch会尝试确定参数类型
+
+###### 6.rosparam标签
+
+可以从YAML文件导入参数，或将参数导出到YAML文件，也可以用来删除参数。在<node>标签中视为私有。
+
+* **command="**load | dump | delete **"**  (默认load) 加载、导出或删除参数
+* **file="$(**find xxxxx)/xxx/yyy...**"**   加载或导出到的yaml文件
+* **param="**参数名称**"**
+* **ns="**命名空间**"**    (可选)
 
 
 
-​	
+
+
+### TF坐标转换
+
+帮助进行坐标变换
+
+**坐标转换常用的msg:** 
+
+`geometry_msgs/TranformStamped`  用于传输坐标系相关位置信息  （含有三轴偏移量和四元数）
+
+`geometry_msgs/PointStamped`		用于传输某个坐标系内坐标点的信息	（三轴坐标）
+
+
+
+#### 静态坐标变换
+
+所谓静态坐标变换，是指两个坐标系之间的相对位置是固定的。
+
+##### 实现分析：
+
+1.坐标系相对关系，通过发布方发布（geometry_msgs/TranformStamped）
+
+2.订阅方，订阅到发布方的坐标系相对关系，再传入坐标点信息，然后借助tf实现坐标变换。
+
+##### 相关实现
+
+项目功能包依赖tf2 , tf2_ros , tf2_geometry_msgs , roscpp , std_msgs , geometry_msgs
+
+**发布方**
+
+```cpp
+/* 
+    静态坐标变换发布方:
+        发布关于 laser 坐标系的位置信息 
+
+    实现流程:
+        1.包含头文件
+        2.初始化 ROS 节点
+        3.创建静态坐标转换广播器
+        4.创建坐标系信息
+        5.广播器发布坐标系信息
+        6.spin()
+*/
+#include "ros/ros.h"
+#include "tf2_ros/static_transform_broadcaster.h" //tf2的静态坐标广播器
+#include "geometry_msgs/TransformStamped.h" //要发布的坐标消息类型
+#include "tf2/LinearMath/Quaternion.h" 	//tf2转换相关
+
+int main(int argc, char *argv[])
+{
+    setlocale(LC_ALL,"");
+    // 2.初始化 ROS 节点
+    ros::init(argc,argv,"static_brocast");
+    // 3.创建静态坐标转换广播器
+    tf2_ros::StaticTransformBroadcaster broadcaster;
+    // 4.创建坐标系信息
+    geometry_msgs::TransformStamped ts;
+    //----设置头信息
+    ts.header.seq = 100;
+    ts.header.stamp = ros::Time::now();
+    ts.header.frame_id = "base_link";
+    //----设置子级坐标系
+    ts.child_frame_id = "laser";
+    //----设置子级相对于父级的偏移量
+    ts.transform.translation.x = 0.2;
+    ts.transform.translation.y = 0.0;
+    ts.transform.translation.z = 0.5;
+    //----设置四元数:将 欧拉角数据转换成四元数
+    tf2::Quaternion qtn;
+    qtn.setRPY(0,0,0);
+    ts.transform.rotation.x = qtn.getX();
+    ts.transform.rotation.y = qtn.getY();
+    ts.transform.rotation.z = qtn.getZ();
+    ts.transform.rotation.w = qtn.getW();
+    // 5.广播器发布坐标系信息
+    broadcaster.sendTransform(ts);
+    ros::spin();
+    return 0;
+}
+```
+
+**订阅方**
+
+```cpp
+/*  
+    订阅坐标系信息，生成一个相对于 子级坐标系的坐标点数据，转换成父级坐标系中的坐标点
+
+    实现流程:
+        1.包含头文件
+        2.初始化 ROS 节点
+        3.创建 TF 订阅节点
+        4.生成一个坐标点(相对于子级坐标系)
+        5.转换坐标点(相对于父级坐标系)
+        6.spin()
+*/
+//1.包含头文件
+#include "ros/ros.h"
+#include "tf2_ros/transform_listener.h"
+#include "tf2_ros/buffer.h" //tf数据
+#include "geometry_msgs/PointStamped.h"
+#include "tf2_geometry_msgs/tf2_geometry_msgs.h" //注意: 调用 transform 必须包含该头文件
+
+int main(int argc, char *argv[])
+{
+    setlocale(LC_ALL,"");
+    // 2.初始化 ROS 节点
+    ros::init(argc,argv,"tf_sub");
+    ros::NodeHandle nh;
+    // 3.创建 TF 订阅节点，接收tf广播信息
+    tf2_ros::Buffer buffer;
+    tf2_ros::TransformListener listener(buffer);
+
+    ros::Rate r(1);
+    while (ros::ok())
+    {
+    // 4.生成一个坐标点(相对于子级坐标系)，手动输入模拟
+        geometry_msgs::PointStamped point_laser;
+        point_laser.header.frame_id = "laser";
+        point_laser.header.stamp = ros::Time::now();
+        point_laser.point.x = 1;
+        point_laser.point.y = 2;
+        point_laser.point.z = 7.3;
+    // 5.转换坐标点(相对于父级坐标系)
+        //新建一个坐标点，用于接收转换结果  
+        //--------------使用 try 语句或休眠，否则可能由于缓存接收延迟而导致坐标转换失败------------------------
+        try
+        {
+            geometry_msgs::PointStamped point_base;
+            point_base = buffer.transform(point_laser,"base_link");//接收转换后的数据
+            ROS_INFO("转换后的数据:(%.2f,%.2f,%.2f),参考的坐标系是:",point_base.point.x,point_base.point.y,point_base.point.z,point_base.header.frame_id.c_str());
+
+        }
+        catch(const std::exception& e)
+        {
+            // std::cerr << e.what() << '\n';
+            ROS_INFO("程序异常.....");
+        }
+        r.sleep();  
+        ros::spinOnce();
+    }
+    return 0;
+}
+```
+
+**ps1:**
+
+坐标系之间相对位置固定时，所需参数也是固定的：父系坐标名称、子级坐标系名称、x偏移量、y偏移量、z偏移量、roll、pitch、yaw。
+
+ros已经封装好了专门的节点：
+
+`rosrun tf2_ros static_transform_publisher x偏移量 y偏移量 z偏移量 z偏航角度 y俯仰角度 x翻滚角度 父级坐标系 子级坐标系`
+
+**PS2：**
+
+可借助rviz显示坐标系关系：
+
+* Fixed Frame设置为base_link；
+* add中选择TF组件，即可显示坐标关系；
