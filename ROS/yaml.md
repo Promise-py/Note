@@ -43,7 +43,19 @@
   param3: 3
   ```
   
+  **ps:**参数名+冒号:+空格+参数值
   
+  
+
+#### 参数读取前提
+
+在launch文件中加载了全局参数定义:
+
+```xml
+<rosparam command="load" file="$(find pkg_name)/config/xxx.yaml"/>
+```
+
+或者从launch文件中启动,并在<node>标签中进行了局部加载
 
 #### 参数读取方法 
 
@@ -80,4 +92,4 @@ int main(int argc, char **argv)
 }
 ```
 
-**ps:** api中用于指向对应参数的"param1"等，可以是参数的全局路径"/param1"也可以是参数名"param1"
+**ps:** api中用于指向对应参数的"param1"等，可以是参数的全局路径"/param1"也可以直接就是参数名"param1"
