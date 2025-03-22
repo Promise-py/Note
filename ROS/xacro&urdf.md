@@ -70,6 +70,22 @@ xacro文件是一种基于XML的宏语言，用于简化URDF文件的编写。
 
 ##### `xacro:include`标签用于包含另一个xacro文件
 
+##### `xacro:property` 标签是用来定义可复用的属性的。
+
+```xml
+<xacro:property name="wheel_track" value="0.4"/>
+<xacro:property name="wheel_base" value="0.4"/>
+<xacro:property name="wheel_offset_z" value="-0.068374"/>
+```
+
+*定义可复用属性后，xacro整个文件里都能引用这个属性。类似于arg标签定义变量可被整个xml文件引用。*
+
+`"wheel_track"` 属性通常用于描述机器人底盘两个轮子之间的横向间距，即轮距、底盘宽度。
+
+`"wheel_base"`属性通常用于描述底盘两个轮子之间的纵向间距，即轴距、底盘长度。
+
+`"wheel_offset_z"`属性通常用于描述轮子相对于机器人主体在垂直方向上的偏移量。负值表示轮子在底盘下方。
+
 
 
 ##### `<gazebo>`标签用于配置gazebo仿真相关

@@ -1022,9 +1022,9 @@ int main(int argc, char *argv[])
 
 加入cmakelist中的头文件目录
 
-```
+```cmake
 include_directories(
-include
+include           #释放include注释！
   ${catkin_INCLUDE_DIRS}
 )
 ```
@@ -1379,6 +1379,11 @@ public:
 - `void starting(const ros::Time& time)`：在控制器启动时被调用，可用于进行一些启动时的初始化操作，比如设置初始状态等。
 - `void stopping(const ros::Time& time)`：在控制器停止时被调用，可用于进行一些清理操作，比如停止电机等。
 
+**others：**
+
+* **`joint_state_controller/JointStateController`控制器通常也会与自定义的控制器一同启用**，在yaml文件中声明命名空间，后直接在launch文件的controller_manager中启用。主要用于发布机器人关节的状态信息，会定期（根据配置的更新频率）收集各个<u>**关节的位置、速度和力矩**</u>等状态信息。封装成`sensor_msgs/JointState`消息并发布到指定的ros话题上。为rviz可视化调试提供实时信息。
+* **`fordward_command_controller`包通常也会在自定义控制器包中包含**，核心功能在于从ros话题中接受到的命令值（如位置，速度或力矩命令）直接传递到机器人的硬件接口，进而驱动相应的关节或者执行器。
+
 
 
 #### 硬件接口
@@ -1404,6 +1409,20 @@ class PositionJointInterface : public JointCommandInterface {};
 
 * `hardware_interface::EffortJointInterface` **力矩控制**（力或扭矩）的形式来控制机器人的关节。通过这个接口，控制器<u>**可以向关节发送期望的力矩值**</u>，硬件接口会将这个值传递给实际的硬件设备（如电机驱动器），从而驱动关节运动。它还提供了获取关节状态（如位置、速度、力矩等）的功能，使得控制器可以根据关节的当前状态进行反馈控制。
 * `hardware_interface::VelocityJointInterface`**速度控制**控制器**<u>向关节发送期望的速度</u>**，硬件接口会把这个值传递给实际的硬件设备。该接口还具备获取关节当前速度的功能，这使得控制器可以依据关节的实际速度进行反馈控制，进而实现更精确的速度调节。
+
+​		**速度控制需要在参数服务器中载入pid相关参数！使用yaml文件载入，命名空间严格**
+
+```yaml
+gazebo_ros_control:
+  pid_gains:
+    your_joint_name:
+      p: 10.0  # 比例增益
+      i: 0.1   # 积分增益
+      d: 0.01  # 微分增益
+```
+
+
+
 * `hardware_interface::PositionJointInterface`**位置控制**的形式控制机器人的关节。通过这个接口，控制器能够向关节发送期望的位置值，硬件接口会把这个值传递给实际的硬件设备，从而驱动关节运动到指定的位置。该接口同样可以获取关节的当前位置，这有助于控制器根据关节的实际位置进行反馈控制，以实现更精准的位置调节。
 
 **操作函数**
@@ -1428,6 +1447,8 @@ const double* getCommandPtr();
 #### 完整实现流程
 
 ##### 1.创建控制器源文件
+
+也可以头-源文件一起进行类的继承编写，需要参考*“自定义头文件调用“*相关
 
 ```cpp
 //include相应的头文件
@@ -1464,6 +1485,10 @@ PLUGINLIB_EXPORT_CLASS(my_controller::MyController, controller_interface::Contro
 
 `PLUGINLIB_EXPORT_CLASS`宏会在编译时生成一些必要的代码，这些代码用于描述插件的元信息，包括插件的类名、基类名以及插件所在的库名等。这些元信息会被存储在一个特定的文件中，供 `pluginlib` 库在运行时查找和加载插件时使用。
 
+**ps:**创建功能包时，注意包含`roscpp`,`roslint`,`controller_interface`,`hardware_interface`,`pluginlib`等依赖项。
+
+**并包含`<pluginlib/class_list_macros.hpp>`头文件！**
+
 ##### 2.配置控制器插件
 
 在控制器**<u>功能包根目录下</u>**创建一个`.xml`文件：
@@ -1472,6 +1497,7 @@ PLUGINLIB_EXPORT_CLASS(my_controller::MyController, controller_interface::Contro
 <!-- 展示参数的命名对应上方控制器源文件 -->
 <!-- 注意命名空间在name和type时候表述的不同 -->
 <library path="lib/libmy_controller">					<!---->
+    <!--说明自定义控制器的类 并说明他基于哪个控制器基类-->
     <class name="my_controller/MyController"
            type="my_controller::MyController"
            base_class_type="controller_interface::ControllerBase">
@@ -1480,9 +1506,30 @@ PLUGINLIB_EXPORT_CLASS(my_controller::MyController, controller_interface::Contro
 </library>
 ```
 
+在package.xml文件中对接插件
+
+```xml
+<export>
+    <!-- Other tools can request additional information be placed here -->
+  <controller_interface plugin="${prefix}/your_XML_name.xml"/>
+  </export>
+```
+
 ##### 3.载入控制器参数
 
-使用yaml文件加载
+使用yaml文件加载,注意命名空间的使用
+
+```yaml
+controller:
+  chassis_velocity_controller:
+    type: chassis_velocity_controller/ChassisVelocityController
+
+  joint_state_controller:
+    type: joint_state_controller/JointStateController
+    publish_rate: 50
+```
+
+**ps:**如果使用的是VelocityJointInterface，还需要加载pid相关参数
 
 ##### 4.编写启动launch文件
 
@@ -1503,6 +1550,8 @@ PLUGINLIB_EXPORT_CLASS(my_controller::MyController, controller_interface::Contro
 
 在`xxx/urdf`目录下创建`robot.urdf.xacro`文件：
 
+说各关节名称及属性，配置传动信息，明确关节和硬件接口之间的映射关系。
+
 ```xml
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="my_robot">
@@ -1512,10 +1561,24 @@ PLUGINLIB_EXPORT_CLASS(my_controller::MyController, controller_interface::Contro
 		<!--相关参数-->
     </link>
     
-    <!-- 左前轮关节，这里的关节名称将用于controller中init处获取硬件接口句柄 -->
+    <!-- 左前轮关节，！这里的关节名称将用于控制器init函数中getHanlde获取硬件接口句柄！ -->
     <joint name="left_front_wheel_joint" type="continuous">
 			<!--相关参数-->
     </joint>
+    
+    <!--将各个关节定义对应的硬件接口-->
+    <xacro:macro name="wheel_transmission" params="prefix mechanical_reduction">
+        <transmission name="${prefix}_wheel_trans">
+            <type>transmission_interface/SimpleTransmission</type>
+            <actuator name="${prefix}_wheel_motor">
+                <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+                <mechanicalReduction>${mechanical_reduction}</mechanicalReduction>
+            </actuator>
+            <joint name="${prefix}_wheel_joint">
+                <hardwareInterface>hardware_interface/VelocityJointInterface</hardwareInterface>
+            </joint>
+        </transmission>
+    </xacro:macro>
     
     <!-- 添加Gazebo插件 -->
     <gazebo>
@@ -1527,4 +1590,12 @@ PLUGINLIB_EXPORT_CLASS(my_controller::MyController, controller_interface::Contro
     
 </robot>
 ```
+
+`<link>`,`<joint>`标签用于说明各个连杆和关节的名称及属性，名称将作为参数加载入参数服务器供getHandle调用。
+
+`<actuator>`标签用于定义执行器。
+
+`<hardwareInterface>`硬件接口类型，将当前执行器or关节定义对应的硬件接口，供gazebo_ros_control官方插件自动注册。
+
+**ps:这里关节定义的对应硬件接口一定要对应关节的控制器硬件接口，否则将无法在参数服务器中查找到对应关节名称。**
 
